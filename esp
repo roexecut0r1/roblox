@@ -1,0 +1,866 @@
+local CoreGui = game:GetService("CoreGui")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local TeamsService = game:GetService("Teams")
+
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local MAX_DISTANCE = 2000
+
+local chamsEnabled = false
+local espEnabled = false
+local specificTargets = {}
+
+local highlights = {}
+local billboards = {}
+local customTeamColors = {}
+local defaultESPColor = Color3.new(1, 1, 1) -- Default white
+
+-------------------------------------------------
+-- GUI ROOT
+-------------------------------------------------
+
+local gui = Instance.new("ScreenGui")
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.DisplayOrder = 999999
+gui.Parent = CoreGui
+
+-------------------------------------------------
+-- HELPERS
+-------------------------------------------------
+
+local function tween(obj, props, duration, style, dir)
+	style = style or Enum.EasingStyle.Quad
+	dir   = dir   or Enum.EasingDirection.Out
+	TweenService:Create(obj, TweenInfo.new(duration or 0.2, style, dir), props):Play()
+end
+
+local function makeCorner(parent, radius)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius or 8)
+	c.Parent = parent
+	return c
+end
+
+-------------------------------------------------
+-- MAIN FRAME
+-------------------------------------------------
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 250, 0, 340)
+frame.Position = UDim2.new(0, 20, 0, 20)
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+frame.BorderSizePixel = 0
+frame.Parent = gui
+makeCorner(frame, 10)
+
+-- TITLE BAR
+local titleFrame = Instance.new("Frame")
+titleFrame.Size = UDim2.new(1, 0, 0, 40)
+titleFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+titleFrame.BorderSizePixel = 0
+titleFrame.Parent = frame
+makeCorner(titleFrame, 10)
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -80, 1, 0)
+titleLabel.Position = UDim2.new(0, 10, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "ESP & Chams"
+titleLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+titleLabel.TextSize = 15
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleFrame
+
+-- CLOSE BUTTON
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 30, 0, 30)
+closeBtn.Position = UDim2.new(1, -35, 0, 5)
+closeBtn.Text = "−"
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 16
+closeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+closeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = titleFrame
+makeCorner(closeBtn, 6)
+
+closeBtn.MouseEnter:Connect(function()
+	tween(closeBtn, {BackgroundColor3 = Color3.fromRGB(80, 80, 80)})
+end)
+closeBtn.MouseLeave:Connect(function()
+	tween(closeBtn, {BackgroundColor3 = Color3.fromRGB(60, 60, 60)})
+end)
+
+-- EXPAND BUTTON
+local expandBtn = Instance.new("TextButton")
+expandBtn.Size = UDim2.new(0, 30, 0, 30)
+expandBtn.Position = UDim2.new(1, -35, 0, 5)
+expandBtn.Text = "+"
+expandBtn.Font = Enum.Font.GothamBold
+expandBtn.TextSize = 16
+expandBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+expandBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+expandBtn.BorderSizePixel = 0
+expandBtn.Visible = false
+expandBtn.Parent = titleFrame
+makeCorner(expandBtn, 6)
+
+expandBtn.MouseEnter:Connect(function()
+	tween(expandBtn, {BackgroundColor3 = Color3.fromRGB(80, 80, 80)})
+end)
+expandBtn.MouseLeave:Connect(function()
+	tween(expandBtn, {BackgroundColor3 = Color3.fromRGB(60, 60, 60)})
+end)
+
+-- CONTENT FRAME
+local contentFrame = Instance.new("Frame")
+contentFrame.Size = UDim2.new(1, 0, 1, -40)
+contentFrame.Position = UDim2.new(0, 0, 0, 40)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = frame
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 6)
+layout.Parent = contentFrame
+
+local padding = Instance.new("UIPadding")
+padding.PaddingLeft   = UDim.new(0, 10)
+padding.PaddingRight  = UDim.new(0, 10)
+padding.PaddingTop    = UDim.new(0, 10)
+padding.PaddingBottom = UDim.new(0, 10)
+padding.Parent = contentFrame
+
+-------------------------------------------------
+-- COLLAPSE / EXPAND
+-------------------------------------------------
+
+local collapsed = false
+
+closeBtn.MouseButton1Click:Connect(function()
+	collapsed = true
+	contentFrame.Visible = false
+	closeBtn.Visible = false
+	expandBtn.Visible = true
+	tween(frame, {Size = UDim2.new(0, 250, 0, 40)}, 0.25)
+end)
+
+expandBtn.MouseButton1Click:Connect(function()
+	collapsed = false
+	expandBtn.Visible = false
+	closeBtn.Visible = true
+	tween(frame, {Size = UDim2.new(0, 250, 0, 340)}, 0.25)
+	task.delay(0.25, function()
+		if not collapsed then
+			contentFrame.Visible = true
+		end
+	end)
+end)
+
+-------------------------------------------------
+-- BUTTON FACTORY
+-------------------------------------------------
+
+local function button(text, parent)
+	parent = parent or contentFrame
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, 0, 0, 38)
+	b.Text = text
+	b.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	b.TextColor3 = Color3.fromRGB(220, 220, 220)
+	b.TextSize = 13
+	b.Font = Enum.Font.GothamSemibold
+	b.BorderSizePixel = 0
+	b.Parent = parent
+	makeCorner(b, 7)
+
+	b.MouseEnter:Connect(function()
+		tween(b, {BackgroundColor3 = Color3.fromRGB(70, 70, 70)})
+	end)
+	b.MouseLeave:Connect(function()
+		tween(b, {BackgroundColor3 = Color3.fromRGB(50, 50, 50)})
+	end)
+	return b
+end
+
+local chamsBtn         = button("Toggle Chams")
+local espBtn           = button("Toggle ESP")
+
+local nameBox = Instance.new("TextBox")
+nameBox.Size = UDim2.new(1, 0, 0, 38)
+nameBox.PlaceholderText = "Player Name..."
+nameBox.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+nameBox.TextColor3 = Color3.fromRGB(220, 220, 220)
+nameBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
+nameBox.TextSize = 12
+nameBox.Font = Enum.Font.Gotham
+nameBox.BorderSizePixel = 0
+nameBox.Parent = contentFrame
+makeCorner(nameBox, 7)
+
+local nbPad = Instance.new("UIPadding")
+nbPad.PaddingLeft = UDim.new(0, 10)
+nbPad.Parent = nameBox
+
+local specificBtn      = button("ESP Specific Player")
+local clearSpecificBtn = button("Clear Specific")
+local teamColorBtn     = button("Team Colors")
+
+-------------------------------------------------
+-- DRAGGING
+-------------------------------------------------
+
+local function setupDragging(handle, moveFrame)
+	local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+	handle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			dragStart = input.Position
+			startPos  = moveFrame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	handle.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end
+	end)
+	UIS.InputChanged:Connect(function(input)
+		if input == dragInput and dragging then
+			local d = input.Position - dragStart
+			moveFrame.Position = UDim2.new(
+				startPos.X.Scale, startPos.X.Offset + d.X,
+				startPos.Y.Scale, startPos.Y.Offset + d.Y
+			)
+		end
+	end)
+end
+
+setupDragging(titleFrame, frame)
+
+-------------------------------------------------
+-- TEAM COLOR
+-------------------------------------------------
+
+local function getTeamColor(player)
+	-- Check if we're in the specific game (ID: 13004241838)
+	if game.PlaceId == 13004241838 then
+		-- For this game, use torso color from workspace model
+		local model = workspace:FindFirstChild(player.Name)
+		if model then
+			local bodyColors = model:FindFirstChild("Body Colors")
+			if bodyColors and bodyColors:IsA("BodyColors") then
+				return bodyColors.TorsoColor3
+			end
+		end
+	else
+		-- For other games, use team color system
+		if player.Team then
+			return customTeamColors[player.Team] or player.Team.TeamColor.Color
+		else
+			-- Use default color for players with no team
+			return defaultESPColor
+		end
+	end
+	
+	-- Fallback to default color
+	return defaultESPColor
+end
+
+-------------------------------------------------
+-- CHAMS / ESP CORE
+-------------------------------------------------
+
+local function applyHighlight(player)
+	if player == LocalPlayer then return end
+	if highlights[player] then return end
+	local char = player.Character
+	if not char then return end
+	local h = Instance.new("Highlight")
+	h.FillTransparency    = 0.9
+	h.OutlineTransparency = 0
+	h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	h.Parent = char
+	highlights[player] = h
+end
+
+local function removeHighlight(player)
+	if highlights[player] then
+		highlights[player]:Destroy()
+		highlights[player] = nil
+	end
+end
+
+local function applyESPText(player)
+	if player == LocalPlayer then return end
+	if billboards[player] then return end
+	local char = player.Character
+	if not char then return end
+	local head     = char:FindFirstChild("Head")
+	local humanoid = char:FindFirstChildOfClass("Humanoid")
+	if not head or not humanoid then return end
+
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.new(0, 200, 0, 40)
+	bb.AlwaysOnTop = true
+	bb.Adornee = head
+	bb.StudsOffset = Vector3.new(0, 2.5, 0)
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.TextStrokeTransparency = 0
+	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+	label.Font = Enum.Font.SourceSansBold
+	label.TextScaled = true
+	label.Parent = bb
+
+	bb.Parent = head
+	billboards[player] = {gui = bb, label = label, humanoid = humanoid, head = head}
+end
+
+local function removeESPText(player)
+	if billboards[player] then
+		billboards[player].gui:Destroy()
+		billboards[player] = nil
+	end
+end
+
+-------------------------------------------------
+-- RENDER LOOP
+-------------------------------------------------
+
+RunService.RenderStepped:Connect(function()
+	local myChar = LocalPlayer.Character
+	local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+	for player, highlight in pairs(highlights) do
+		if highlight and highlight.Parent then
+			local color = getTeamColor(player)
+			highlight.FillColor    = color
+			highlight.OutlineColor = color
+		else
+			highlights[player] = nil
+		end
+	end
+
+	for player, data in pairs(billboards) do
+		if not myRoot or not data.head or not data.head.Parent or not data.humanoid or not data.humanoid.Parent then
+			if data.gui then
+				data.gui.Enabled = false
+			end
+			continue
+		end
+
+		local dist = (data.head.Position - myRoot.Position).Magnitude
+		if dist > MAX_DISTANCE then
+			data.gui.Enabled = false
+			continue
+		end
+
+		data.gui.Enabled = true
+		local color = getTeamColor(player)
+		data.label.Text = player.Name .. " | " .. math.floor(data.humanoid.Health) .. " | " .. math.floor(dist) .. " studs"
+		data.label.TextColor3 = color
+		data.label.TextSize = 14 * math.clamp(1 - (dist / 1000), 0.5, 1)
+	end
+end)
+
+-------------------------------------------------
+-- MAIN BUTTONS
+-------------------------------------------------
+
+chamsBtn.MouseButton1Click:Connect(function()
+	chamsEnabled = not chamsEnabled
+	if chamsEnabled then
+		espEnabled = false
+		for _, p in pairs(Players:GetPlayers()) do
+			if not specificTargets[p] then
+				removeESPText(p)
+				applyHighlight(p)
+			else
+				applyHighlight(p)
+				applyESPText(p)
+			end
+		end
+	else
+		for _, p in pairs(Players:GetPlayers()) do
+			if not specificTargets[p] then
+				removeHighlight(p)
+			else
+				applyHighlight(p)
+				applyESPText(p)
+			end
+		end
+	end
+end)
+
+espBtn.MouseButton1Click:Connect(function()
+	espEnabled = not espEnabled
+	if espEnabled then
+		chamsEnabled = false
+		for _, p in pairs(Players:GetPlayers()) do
+			if not specificTargets[p] then
+				applyHighlight(p)
+				applyESPText(p)
+			end
+		end
+	else
+		for _, p in pairs(Players:GetPlayers()) do
+			if not specificTargets[p] then
+				removeESPText(p)
+				removeHighlight(p)
+			else
+				applyHighlight(p)
+				applyESPText(p)
+			end
+		end
+	end
+end)
+
+local function findPlayer(name)
+	name = name:lower()
+	for _, p in pairs(Players:GetPlayers()) do
+		if p.Name:lower():find(name) then return p end
+	end
+end
+
+specificBtn.MouseButton1Click:Connect(function()
+	local player = findPlayer(nameBox.Text)
+	if player then
+		specificTargets[player] = true
+		applyHighlight(player)
+		applyESPText(player)
+	end
+end)
+
+clearSpecificBtn.MouseButton1Click:Connect(function()
+	for player in pairs(specificTargets) do
+		removeHighlight(player)
+		removeESPText(player)
+		specificTargets[player] = nil
+	end
+end)
+
+-------------------------------------------------
+-- PLAYER JOIN / RESPAWN / LEAVE
+-------------------------------------------------
+
+local function applyForPlayer(player)
+	if player == LocalPlayer then return end
+	removeHighlight(player)
+	removeESPText(player)
+
+	local char = player.Character
+	if not char then return end
+
+	local head     = char:WaitForChild("Head", 5)
+	local humanoid = char:WaitForChild("Humanoid", 5)
+	if not head or not humanoid then return end
+
+	local isSpecific = specificTargets[player]
+	if chamsEnabled and not isSpecific then applyHighlight(player) end
+	if espEnabled and not isSpecific then
+		applyHighlight(player)
+		applyESPText(player)
+	end
+	if isSpecific then
+		applyHighlight(player)
+		applyESPText(player)
+	end
+end
+
+local function setupPlayer(player)
+	player.CharacterAdded:Connect(function()
+		task.wait()
+		applyForPlayer(player)
+	end)
+	if player.Character then
+		task.spawn(function()
+			applyForPlayer(player)
+		end)
+	end
+end
+
+for _, player in pairs(Players:GetPlayers()) do
+	if player ~= LocalPlayer then
+		setupPlayer(player)
+	end
+end
+
+Players.PlayerAdded:Connect(setupPlayer)
+Players.PlayerRemoving:Connect(function(player)
+	removeHighlight(player)
+	removeESPText(player)
+	specificTargets[player] = nil
+end)
+
+-------------------------------------------------
+-- COLOR PICKER GUI (hidden by default)
+-------------------------------------------------
+
+local pickerGui = Instance.new("ScreenGui")
+pickerGui.Name = "ESPColorEditor"
+pickerGui.ResetOnSpawn = false
+pickerGui.IgnoreGuiInset = true
+pickerGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pickerGui.DisplayOrder = 999999
+pickerGui.Parent = CoreGui
+
+local pickerFrame = Instance.new("Frame")
+pickerFrame.Size = UDim2.new(0, 420, 0, 340)
+pickerFrame.Position = UDim2.new(0.5, -210, 0.5, -170)
+pickerFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 32)
+pickerFrame.BorderSizePixel = 0
+pickerFrame.Visible = false
+pickerFrame.Parent = pickerGui
+makeCorner(pickerFrame, 10)
+
+-- PICKER TOP BAR
+local pickerTopBar = Instance.new("Frame")
+pickerTopBar.Size = UDim2.new(1, 0, 0, 32)
+pickerTopBar.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+pickerTopBar.BorderSizePixel = 0
+pickerTopBar.Parent = pickerFrame
+
+local pickerTitle = Instance.new("TextLabel")
+pickerTitle.Text = "Team Color Editor"
+pickerTitle.Font = Enum.Font.GothamBold
+pickerTitle.TextSize = 13
+pickerTitle.TextColor3 = Color3.new(1, 1, 1)
+pickerTitle.BackgroundTransparency = 1
+pickerTitle.Size = UDim2.new(1, -40, 1, 0)
+pickerTitle.Position = UDim2.new(0, 10, 0, 0)
+pickerTitle.TextXAlignment = Enum.TextXAlignment.Left
+pickerTitle.Parent = pickerTopBar
+
+-- PICKER CLOSE BUTTON
+local pickerClose = Instance.new("TextButton")
+pickerClose.Size = UDim2.new(0, 30, 0, 26)
+pickerClose.Position = UDim2.new(1, -33, 0, 3)
+pickerClose.Text = "✕"
+pickerClose.Font = Enum.Font.GothamBold
+pickerClose.TextSize = 13
+pickerClose.TextColor3 = Color3.new(1, 1, 1)
+pickerClose.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+pickerClose.BorderSizePixel = 0
+pickerClose.Parent = pickerTopBar
+makeCorner(pickerClose, 6)
+
+pickerClose.MouseEnter:Connect(function()
+	tween(pickerClose, {BackgroundColor3 = Color3.fromRGB(200, 60, 60)})
+end)
+pickerClose.MouseLeave:Connect(function()
+	tween(pickerClose, {BackgroundColor3 = Color3.fromRGB(45, 45, 50)})
+end)
+pickerClose.MouseButton1Click:Connect(function()
+	pickerFrame.Visible = false
+end)
+
+teamColorBtn.MouseButton1Click:Connect(function()
+	pickerFrame.Visible = true
+end)
+
+-- PICKER DRAGGING
+local pickerDragging = false
+local pickerDragStart, pickerStartPos
+
+pickerTopBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		pickerDragging = true
+		pickerDragStart = input.Position
+		pickerStartPos = pickerFrame.Position
+	end
+end)
+
+UIS.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		pickerDragging = false
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if pickerDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - pickerDragStart
+		pickerFrame.Position = UDim2.new(
+			pickerStartPos.X.Scale, pickerStartPos.X.Offset + delta.X,
+			pickerStartPos.Y.Scale, pickerStartPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- TEAM LIST
+local teamList = Instance.new("ScrollingFrame")
+teamList.Size = UDim2.new(0, 130, 1, -120)
+teamList.Position = UDim2.new(0, 0, 0, 40)
+teamList.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
+teamList.BorderSizePixel = 0
+teamList.CanvasSize = UDim2.new()
+teamList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+teamList.ScrollBarThickness = 4
+teamList.Parent = pickerFrame
+
+local teamLayout = Instance.new("UIListLayout")
+teamLayout.Padding = UDim.new(0, 4)
+teamLayout.Parent = teamList
+
+-- PICKER AREA
+local pickerArea = Instance.new("Frame")
+pickerArea.Size = UDim2.new(1, -130, 1, -32)
+pickerArea.Position = UDim2.new(0, 130, 0, 32)
+pickerArea.BackgroundTransparency = 1
+pickerArea.Parent = pickerFrame
+
+-- COLOR SQUARE
+local square = Instance.new("ImageLabel")
+square.Size = UDim2.new(0, 220, 0, 150)
+square.Position = UDim2.new(0, 20, 0, 20)
+square.Image = "rbxassetid://4155801252"
+square.BorderSizePixel = 0
+square.Parent = pickerArea
+makeCorner(square, 6)
+
+local selector = Instance.new("Frame")
+selector.Size = UDim2.new(0, 8, 0, 8)
+selector.AnchorPoint = Vector2.new(0.5, 0.5)
+selector.BackgroundColor3 = Color3.new(1, 1, 1)
+selector.Parent = square
+makeCorner(selector, 99)
+
+-- HUE SLIDER
+local hueBar = Instance.new("ImageLabel")
+hueBar.Size = UDim2.new(0, 220, 0, 10)
+hueBar.Position = UDim2.new(0, 20, 0, 180)
+hueBar.Image = "rbxassetid://3641079629"
+hueBar.BorderSizePixel = 0
+hueBar.Parent = pickerArea
+makeCorner(hueBar, 99)
+
+local hueSelector = Instance.new("Frame")
+hueSelector.Size = UDim2.new(0, 4, 1, 4)
+hueSelector.Position = UDim2.new(0, 0, -0.2, 0)
+hueSelector.BackgroundColor3 = Color3.new(1, 1, 1)
+hueSelector.Parent = hueBar
+
+-- PREVIEW
+local preview = Instance.new("Frame")
+preview.Size = UDim2.new(0, 40, 0, 40)
+preview.Position = UDim2.new(0, 260, 0, 20)
+preview.BackgroundColor3 = Color3.new(1, 0, 0)
+preview.BorderSizePixel = 0
+preview.Parent = pickerArea
+makeCorner(preview, 99)
+
+-- HEX INPUT
+local hexBox = Instance.new("TextBox")
+hexBox.Size = UDim2.new(0, 120, 0, 28)
+hexBox.Position = UDim2.new(0, 260, 0, 70)
+hexBox.PlaceholderText = "#FF0000"
+hexBox.TextColor3 = Color3.new(1, 1, 1)
+hexBox.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+hexBox.BorderSizePixel = 0
+hexBox.Parent = pickerArea
+makeCorner(hexBox, 6)
+
+-- DEFAULT COLOR SECTION
+local defaultFrame = Instance.new("Frame")
+defaultFrame.Size = UDim2.new(1, -140, 0, 60)
+defaultFrame.Position = UDim2.new(0, 10, 0, 200)
+defaultFrame.BackgroundTransparency = 1
+defaultFrame.Parent = pickerArea
+
+local defaultLabel = Instance.new("TextLabel")
+defaultLabel.Size = UDim2.new(1, 0, 0, 20)
+defaultLabel.Position = UDim2.new(0, 0, 0, 0)
+defaultLabel.BackgroundTransparency = 1
+defaultLabel.Text = "Default No-Team Color:"
+defaultLabel.TextColor3 = Color3.new(1, 1, 1)
+defaultLabel.TextSize = 12
+defaultLabel.Font = Enum.Font.Gotham
+defaultLabel.TextXAlignment = Enum.TextXAlignment.Left
+defaultLabel.Parent = defaultFrame
+
+local defaultPreview = Instance.new("Frame")
+defaultPreview.Size = UDim2.new(0, 30, 0, 30)
+defaultPreview.Position = UDim2.new(0, 0, 0, 25)
+defaultPreview.BackgroundColor3 = defaultESPColor
+defaultPreview.BorderSizePixel = 0
+defaultPreview.Parent = defaultFrame
+makeCorner(defaultPreview, 6)
+
+local defaultBtn = Instance.new("TextButton")
+defaultBtn.Size = UDim2.new(0, 80, 0, 30)
+defaultBtn.Position = UDim2.new(0, 40, 0, 25)
+defaultBtn.Text = "Set Default"
+defaultBtn.Font = Enum.Font.Gotham
+defaultBtn.TextSize = 12
+defaultBtn.TextColor3 = Color3.new(1, 1, 1)
+defaultBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+defaultBtn.BorderSizePixel = 0
+defaultBtn.Parent = defaultFrame
+makeCorner(defaultBtn, 6)
+
+defaultBtn.MouseEnter:Connect(function()
+	tween(defaultBtn, {BackgroundColor3 = Color3.fromRGB(70, 70, 75)})
+end)
+defaultBtn.MouseLeave:Connect(function()
+	tween(defaultBtn, {BackgroundColor3 = Color3.fromRGB(50, 50, 55)})
+end)
+
+-- Store reference to update preview
+local defaultPreviewRef = defaultPreview
+
+-- COLOR LOGIC
+local h_val = 0
+local s_val = 1
+local v_val = 1
+local selectedTeam = nil
+
+local function updateColor()
+	local color = Color3.fromHSV(h_val, s_val, v_val)
+	square.BackgroundColor3 = Color3.fromHSV(h_val, 1, 1)
+	preview.BackgroundColor3 = color
+
+	local r = math.floor(color.R * 255)
+	local g = math.floor(color.G * 255)
+	local b = math.floor(color.B * 255)
+	hexBox.Text = string.format("#%02X%02X%02X", r, g, b)
+
+	if selectedTeam then
+		customTeamColors[selectedTeam] = color
+	elseif selectedTeam == nil then  -- Default color case
+		defaultESPColor = color
+		defaultPreviewRef.BackgroundColor3 = color
+	end
+end
+
+-- PICKER INPUT
+local draggingSquare = false
+local draggingHue = false
+
+square.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		draggingSquare = true
+	end
+end)
+
+hueBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		draggingHue = true
+	end
+end)
+
+UIS.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		draggingSquare = false
+		draggingHue = false
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+
+	if draggingSquare then
+		local x = math.clamp(input.Position.X - square.AbsolutePosition.X, 0, square.AbsoluteSize.X)
+		local y = math.clamp(input.Position.Y - square.AbsolutePosition.Y, 0, square.AbsoluteSize.Y)
+		s_val = x / square.AbsoluteSize.X
+		v_val = 1 - y / square.AbsoluteSize.Y
+		selector.Position = UDim2.new(0, x, 0, y)
+		updateColor()
+	end
+
+	if draggingHue then
+		local x = math.clamp(input.Position.X - hueBar.AbsolutePosition.X, 0, hueBar.AbsoluteSize.X)
+		h_val = x / hueBar.AbsoluteSize.X
+		hueSelector.Position = UDim2.new(0, x, 0, 0)
+		updateColor()
+	end
+end)
+
+local function hexToColor3(hexValue)
+	hexValue = hexValue:gsub("#", "")
+	if #hexValue ~= 6 then return end
+	local r = tonumber(hexValue:sub(1, 2), 16)
+	local g = tonumber(hexValue:sub(3, 4), 16)
+	local b = tonumber(hexValue:sub(5, 6), 16)
+	if r and g and b then
+		return Color3.fromRGB(r, g, b)
+	end
+end
+
+hexBox.FocusLost:Connect(function()
+	local c = hexToColor3(hexBox.Text)
+	if c then
+		h_val, s_val, v_val = Color3.toHSV(c)
+		selector.Position = UDim2.new(0, s_val * square.AbsoluteSize.X, 0, (1 - v_val) * square.AbsoluteSize.Y)
+		hueSelector.Position = UDim2.new(0, h_val * hueBar.AbsoluteSize.X, 0, 0)
+		updateColor()
+	end
+end)
+
+-- TEAM BUTTONS
+for _, team in pairs(TeamsService:GetTeams()) do
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, -6, 0, 30)
+	b.Position = UDim2.new(0, 3, 0, 0)
+	b.Text = team.Name
+	b.Font = Enum.Font.Gotham
+	b.TextSize = 13
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+	b.BorderSizePixel = 0
+	b.Parent = teamList
+	makeCorner(b, 6)
+
+	b.MouseButton1Click:Connect(function()
+		selectedTeam = team
+
+		local color = customTeamColors[team] or team.TeamColor.Color
+		h_val, s_val, v_val = Color3.toHSV(color)
+
+		square.BackgroundColor3 = Color3.fromHSV(h_val, 1, 1)
+		preview.BackgroundColor3 = color
+
+		local r = math.floor(color.R * 255)
+		local g = math.floor(color.G * 255)
+		local bVal = math.floor(color.B * 255)
+		hexBox.Text = string.format("#%02X%02X%02X", r, g, bVal)
+
+		local x = s_val * square.AbsoluteSize.X
+		local y = (1 - v_val) * square.AbsoluteSize.Y
+		selector.Position = UDim2.new(0, x, 0, y)
+
+		local hueX = h_val * hueBar.AbsoluteSize.X
+		hueSelector.Position = UDim2.new(0, hueX, 0, 0)
+	end)
+end
+
+defaultBtn.MouseButton1Click:Connect(function()
+	selectedTeam = nil  -- Special case for default color
+	
+	local color = defaultESPColor
+	h_val, s_val, v_val = Color3.toHSV(color)
+	
+	square.BackgroundColor3 = Color3.fromHSV(h_val, 1, 1)
+	preview.BackgroundColor3 = color
+	defaultPreviewRef.BackgroundColor3 = color
+
+	local r = math.floor(color.R * 255)
+	local g = math.floor(color.G * 255)
+	local bVal = math.floor(color.B * 255)
+	hexBox.Text = string.format("#%02X%02X%02X", r, g, bVal)
+
+	local x = s_val * square.AbsoluteSize.X
+	local y = (1 - v_val) * square.AbsoluteSize.Y
+	selector.Position = UDim2.new(0, x, 0, y)
+
+	local hueX = h_val * hueBar.AbsoluteSize.X
+	hueSelector.Position = UDim2.new(0, hueX, 0, 0)
+end)
