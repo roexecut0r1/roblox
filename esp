@@ -14,6 +14,10 @@ local MAX_DISTANCE = 2000
 local chamsEnabled = false
 local espEnabled = false
 local specificTargets = {}
+local TracersEnabled = false -- New variable to track if tracers are on
+local tracerLines = {} -- Table to hold the Drawing line instances for each player
+local tracerOrigin = "Center" -- "Top", "Center", "Bottom"
+
 
 local highlights = {}
 local billboards = {}
@@ -29,6 +33,7 @@ gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.DisplayOrder = 999999
+
 gui.Parent = CoreGui
 
 -------------------------------------------------
@@ -49,11 +54,11 @@ local function makeCorner(parent, radius)
 end
 
 -------------------------------------------------
--- MAIN FRAME
+-- MAIN FRAME (Made taller to accommodate new button)
 -------------------------------------------------
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 250, 0, 340)
+frame.Size = UDim2.new(0, 250, 0, 420) -- adjusted height to remove small empty space
 frame.Position = UDim2.new(0, 20, 0, 20)
 frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 frame.BorderSizePixel = 0
@@ -156,7 +161,7 @@ expandBtn.MouseButton1Click:Connect(function()
 	collapsed = false
 	expandBtn.Visible = false
 	closeBtn.Visible = true
-	tween(frame, {Size = UDim2.new(0, 250, 0, 340)}, 0.25)
+	tween(frame, {Size = UDim2.new(0, 250, 0, 420)}, 0.25) -- adjusted height
 	task.delay(0.25, function()
 		if not collapsed then
 			contentFrame.Visible = true
@@ -192,6 +197,21 @@ end
 
 local chamsBtn         = button("Toggle Chams")
 local espBtn           = button("Toggle ESP")
+local tracersBtn       = button("Toggle Tracers") -- New tracers button
+local tracerOriginBtn  = button("Tracer Origin: Center")
+
+tracerOriginBtn.MouseButton1Click:Connect(function()
+	if tracerOrigin == "Center" then
+		tracerOrigin = "Top"
+		tracerOriginBtn.Text = "Tracer Origin: Top"
+	elseif tracerOrigin == "Top" then
+		tracerOrigin = "Bottom"
+		tracerOriginBtn.Text = "Tracer Origin: Bottom"
+	else
+		tracerOrigin = "Center"
+		tracerOriginBtn.Text = "Tracer Origin: Center"
+	end
+end)
 
 local nameBox = Instance.new("TextBox")
 nameBox.Size = UDim2.new(1, 0, 0, 38)
@@ -321,7 +341,6 @@ local function applyESPText(player)
 	label.Font = Enum.Font.SourceSansBold
 	label.TextScaled = true
 	label.Parent = bb
-
 	bb.Parent = head
 	billboards[player] = {gui = bb, label = label, humanoid = humanoid, head = head}
 end
@@ -333,13 +352,109 @@ local function removeESPText(player)
 	end
 end
 
+-- Helper function to get root part
+	local function getRoot(char)
+		return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+	end
+
+-- Function to manage tracers for a player
+local function updateTracerForPlayer(player)
+	-- Use the Drawing API to draw a 2D line from the center of the screen
+	-- to the player's torso. Previous implementation used LineHandleAdornment
+	-- with non-existent properties and didn't render.
+	if not TracersEnabled or player == LocalPlayer then
+		if tracerLines[player] then
+			pcall(function()
+				if tracerLines[player].Remove then tracerLines[player]:Remove() end
+			end)
+			tracerLines[player] = nil
+		end
+		return
+	end
+
+	local char = player.Character
+	if not char then
+		if tracerLines[player] then
+			pcall(function()
+				if tracerLines[player].Remove then tracerLines[player]:Remove() end
+			end)
+			tracerLines[player] = nil
+		end
+		return
+	end
+
+	local rootPart = getRoot(char)
+	if not rootPart then
+		if tracerLines[player] then
+			pcall(function()
+				if tracerLines[player].Remove then tracerLines[player]:Remove() end
+			end)
+			tracerLines[player] = nil
+		end
+		return
+	end
+
+	-- Create or get the Drawing line
+	local line = tracerLines[player]
+	if not line then
+		local ok, d = pcall(function() return Drawing and Drawing.new("Line") end)
+		if ok and d then
+			line = d
+		else
+			-- Drawing API unavailable; abort creating tracer
+			return
+		end
+		tracerLines[player] = line
+			line.Thickness = 2
+		line.Transparency = 0.6
+		line.Visible = true
+	end
+
+	-- Compute screen positions
+	local screenPos, onScreen = Camera:WorldToViewportPoint(rootPart.Position)
+	local viewportSize = Camera.ViewportSize
+	local center = Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+
+	-- Determine origin point based on tracerOrigin setting
+	local originPoint
+	if tracerOrigin == "Top" then
+		originPoint = Vector2.new(center.X, 0)
+	elseif tracerOrigin == "Bottom" then
+		originPoint = Vector2.new(center.X, viewportSize.Y)
+	else
+		originPoint = center
+	end
+
+	-- Hide if out of distance or not on-screen
+	local dist = (Camera.CFrame.Position - rootPart.Position).Magnitude
+	if dist > MAX_DISTANCE or not onScreen then
+		line.Visible = false
+		return
+	end
+
+	-- Determine endpoint: on-screen target
+	local toPos = Vector2.new(screenPos.X, screenPos.Y)
+    
+	-- Parent the line to CoreGui if not already
+	if not line.Parent then
+		pcall(function() line.Parent = CoreGui end)
+	end
+    
+
+	-- Update line endpoints and color
+	line.From = originPoint
+	line.To = toPos
+	line.Color = getTeamColor(player)
+	line.Visible = true
+end
+
 -------------------------------------------------
 -- RENDER LOOP
 -------------------------------------------------
 
 RunService.RenderStepped:Connect(function()
 	local myChar = LocalPlayer.Character
-	local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	local myRoot = myChar and getRoot(myChar)
 
 	for player, highlight in pairs(highlights) do
 		if highlight and highlight.Parent then
@@ -370,6 +485,15 @@ RunService.RenderStepped:Connect(function()
 		data.label.Text = player.Name .. " | " .. math.floor(data.humanoid.Health) .. " | " .. math.floor(dist) .. " studs"
 		data.label.TextColor3 = color
 		data.label.TextSize = 14 * math.clamp(1 - (dist / 1000), 0.5, 1)
+	end
+
+	-- Update tracers
+	if TracersEnabled then
+		for _, player in pairs(Players:GetPlayers()) do
+			if player ~= LocalPlayer then
+				updateTracerForPlayer(player)
+			end
+		end
 	end
 end)
 
@@ -424,6 +548,27 @@ espBtn.MouseButton1Click:Connect(function()
 		end
 	end
 end)
+
+-- Tracers button functionality
+tracersBtn.MouseButton1Click:Connect(function()
+	TracersEnabled = not TracersEnabled
+	tracersBtn.Text = TracersEnabled and "Tracers: ON" or "Tracers: OFF"
+	
+	-- Clean up tracers when disabled
+	if not TracersEnabled then
+		for _, line in pairs(tracerLines) do
+			pcall(function()
+				if line.Remove then line:Remove() elseif line.Destroy then line:Destroy() end
+			end)
+		end
+		tracerLines = {}
+	end
+end)
+
+-- Tracer origin button cycles between Top/Middle/Bottom
+-- tracerOrigin button removed in revert
+
+
 
 local function findPlayer(name)
 	name = name:lower()
@@ -481,10 +626,20 @@ local function setupPlayer(player)
 	player.CharacterAdded:Connect(function()
 		task.wait()
 		applyForPlayer(player)
+		
+		-- Handle tracer updates when character respawns
+		if TracersEnabled then
+			updateTracerForPlayer(player)
+		end
 	end)
 	if player.Character then
 		task.spawn(function()
 			applyForPlayer(player)
+			
+			-- Handle tracer updates for existing characters
+			if TracersEnabled then
+				updateTracerForPlayer(player)
+			end
 		end)
 	end
 end
@@ -500,11 +655,21 @@ Players.PlayerRemoving:Connect(function(player)
 	removeHighlight(player)
 	removeESPText(player)
 	specificTargets[player] = nil
+	
+	-- Remove tracer when player leaves
+	if tracerLines[player] then
+		pcall(function()
+			if tracerLines[player].Remove then tracerLines[player]:Remove()
+			elseif tracerLines[player].Destroy then tracerLines[player]:Destroy() end
+		end)
+		tracerLines[player] = nil
+	end
 end)
 
 -------------------------------------------------
 -- COLOR PICKER GUI (hidden by default)
 -------------------------------------------------
+
 
 local pickerGui = Instance.new("ScreenGui")
 pickerGui.Name = "ESPColorEditor"
@@ -512,6 +677,7 @@ pickerGui.ResetOnSpawn = false
 pickerGui.IgnoreGuiInset = true
 pickerGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 pickerGui.DisplayOrder = 999999
+
 pickerGui.Parent = CoreGui
 
 local pickerFrame = Instance.new("Frame")
