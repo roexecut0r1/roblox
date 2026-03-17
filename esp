@@ -23,11 +23,183 @@ HomeTab:CreateParagraph({
     Title = "Made by That Mango Nigga",
     Content = "Welcome to the nigga loader!"
 })
-local AimbotTab = Window:CreateTab("Aimbot", 4483362458)
-AimbotTab:CreateParagraph({
-    Title = "Coming Soon",
-    Content = "Aimbot features are coming soon."
+HomeTab:CreateButton({
+    Name = "Infinite Yeild",
+    Callback = function()
+        local ok, err = pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+        end)
+        if not ok then
+            warn("Failed to load Infinite Yeild:", err)
+        end
+    end
 })
+local AimbotTab = Window:CreateTab("Aimbot", 4483362458)
+-- Aimbot Settings
+local aimbotEnabled = false
+local smoothness = 0.2
+local wallCheck = false
+local teamCheck = false
+local aimPart = "Head"
+local useKeyboardKeybind = false -- false = mouse, true = keyboard
+local aimKey = Enum.UserInputType.MouseButton2
+
+
+local showFOV = false
+local fovRadius = 120
+local fovTransparency = 0.5
+local fovThickness = 1
+local fovColor = Color3.fromRGB(255, 255, 255)
+
+local aimbotToggle = AimbotTab:CreateToggle({
+    Name = "Enable Aimbot",
+    CurrentValue = false,
+    Flag = "AimbotEnabled",
+    Callback = function(v)
+        aimbotEnabled = v
+    end
+})
+
+AimbotTab:CreateKeybind({
+    Name = "Toggle Aimbot",
+    CurrentKeybind = ".",
+    HoldToInteract = false,
+    Flag = "AimbotToggleKeybind",
+    Callback = function()
+        aimbotToggle:Set(not aimbotEnabled)
+    end,
+})
+
+AimbotTab:CreateSlider({
+    Name = "Smoothness",
+    Range = {0, 1},
+    Increment = 0.01,
+    CurrentValue = 0.2,
+    Callback = function(v)
+        smoothness = v
+    end
+})
+
+AimbotTab:CreateToggle({
+    Name = "Wall Check",
+    CurrentValue = false,
+    Callback = function(v)
+        wallCheck = v
+    end
+})
+
+AimbotTab:CreateToggle({
+    Name = "Team Check",
+    CurrentValue = false,
+    Callback = function(v)
+        teamCheck = v
+    end
+})
+
+AimbotTab:CreateDropdown({
+    Name = "Target Part",
+    Options = {"Head","Torso","Left Arm","Right Arm","Left Leg","Right Leg"},
+    CurrentOption = {"Head"},
+    Callback = function(v)
+        aimPart = v[1]
+    end
+})
+
+AimbotTab:CreateParagraph({
+    Title = "Aim Key Info",
+    Content = "Choose whether to use a keyboard key or a mouse button for aiming."
+})
+
+AimbotTab:CreateToggle({
+    Name = "Use Keyboard Keybind",
+    CurrentValue = false,
+    Callback = function(v)
+        useKeyboardKeybind = v
+    end
+})
+
+local UIS = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+
+local currentKey = Enum.UserInputType.MouseButton2 -- default
+local aimKeyHeld = false
+local mouseHeld = false
+local selectedMouseButton = "MouseButton2"
+local circle
+
+
+AimbotTab:CreateKeybind({
+    Name = "Aim Key (Keyboard Only)",
+    CurrentKeybind = "?",
+    HoldToInteract = true,
+    Flag = "AimbotKeybind",
+
+    Callback = function(held)
+        aimKeyHeld = held
+    end,
+})
+
+AimbotTab:CreateDropdown({
+    Name = "Mouse Aim Button",
+    Options = {"MouseButton2","MouseButton1","MouseButton3"},
+    CurrentOption = {"MouseButton2"},
+    Callback = function(v)
+        selectedMouseButton = v[1]
+    end
+})
+
+AimbotTab:CreateToggle({
+    Name = "Show FOV",
+    CurrentValue = false,
+    Callback = function(v)
+        showFOV = v
+    end
+})
+
+AimbotTab:CreateSlider({
+    Name = "FOV Radius",
+    Range = {20, 500},
+    Increment = 5,
+    CurrentValue = 120,
+    Callback = function(v)
+        fovRadius = v
+    end
+})
+
+AimbotTab:CreateSlider({
+    Name = "FOV Transparency",
+    Range = {0, 1},
+    Increment = 0.05,
+    CurrentValue = 0.5,
+    Callback = function(v)
+        fovTransparency = v
+    end
+})
+
+AimbotTab:CreateSlider({
+    Name = "FOV Thickness",
+    Range = {1, 5},
+    Increment = 0.5,
+    CurrentValue = 1,
+    Callback = function(v)
+        fovThickness = v
+    end
+})
+
+AimbotTab:CreateColorPicker({
+    Name = "FOV Color",
+    Color = fovColor,
+    Flag = "AimbotFOVColor",
+    Callback = function(v)
+        fovColor = v
+        if circle then
+            circle.Color = v
+        end
+    end
+})
+
 local EspTab = Window:CreateTab("ESP", 4483362458)
 EspTab:CreateParagraph({
     Title = "Do not have esp and chams on at the same time!",
@@ -1627,3 +1799,127 @@ pcall(function() enable_esp() end)
 
 -- Optional notify
 Rayfield:Notify({Title = "Loader", Content = "Rayfield UI created. Press K to toggle.", Duration = 4})
+
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+
+-- FOV Circle
+circle = Drawing.new("Circle")
+circle.Visible = false
+circle.Radius = fovRadius
+circle.Transparency = fovTransparency
+circle.Thickness = fovThickness
+circle.Color = fovColor
+circle.Filled = false
+
+
+
+-- Get closest target
+local function getClosest()
+    local closest = nil
+    local shortest = math.huge
+
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+            if not humanoid or humanoid.Health <= 0 then
+                continue
+            end
+            
+            if teamCheck and player.Team == LocalPlayer.Team then
+                continue
+            end
+
+            local part = player.Character:FindFirstChild(aimPart) or player.Character:FindFirstChild("Head")
+            if not part then continue end
+
+            local screenPoint, onScreen = Camera:WorldToViewportPoint(part.Position)
+            if not onScreen or screenPoint.Z <= 0 then continue end
+
+            local mouse = UIS:GetMouseLocation()
+            local dist = (Vector2.new(screenPoint.X, screenPoint.Y) - mouse).Magnitude
+
+            if dist < shortest and dist <= fovRadius then
+
+                if wallCheck then
+                    local ray = workspace:Raycast(Camera.CFrame.Position, (part.Position - Camera.CFrame.Position))
+                    if ray and ray.Instance and not ray.Instance:IsDescendantOf(player.Character) then
+                        continue
+                    end
+                end
+
+                shortest = dist
+                closest = part
+            end
+        end
+    end
+
+    return closest
+end
+
+-- Main loop
+RunService.RenderStepped:Connect(function()
+    local mousePosition = UIS:GetMouseLocation()
+
+    -- Update FOV circle
+    circle.Position = mousePosition
+    circle.Radius = fovRadius
+    circle.Transparency = fovTransparency
+    circle.Thickness = fovThickness
+    circle.Color = fovColor
+    circle.Visible = showFOV
+
+    local isHolding = useKeyboardKeybind and aimKeyHeld or mouseHeld
+
+    if aimbotEnabled and isHolding then
+        local target = getClosest()
+        if target then
+            local aimPos, onScreen = Camera:WorldToViewportPoint(target.Position)
+            if onScreen and aimPos.Z > 0 then
+                local alpha = math.clamp(1 - smoothness, 0.02, 1)
+                local desiredPosition = Vector2.new(aimPos.X, aimPos.Y)
+                local smoothedPosition = mousePosition:Lerp(desiredPosition, alpha)
+                local currentMouse = UIS:GetMouseLocation()
+                local delta = smoothedPosition - currentMouse
+
+                mousemoverel(delta.X, delta.Y)
+            end
+        end
+    end
+end)
+
+Mouse.Button1Down:Connect(function()
+    if selectedMouseButton == "MouseButton1" then
+        mouseHeld = true
+    end
+end)
+
+Mouse.Button1Up:Connect(function()
+    if selectedMouseButton == "MouseButton1" then
+        mouseHeld = false
+    end
+end)
+
+Mouse.Button2Down:Connect(function()
+    if selectedMouseButton == "MouseButton2" then
+        mouseHeld = true
+    end
+end)
+
+Mouse.Button2Up:Connect(function()
+    if selectedMouseButton == "MouseButton2" then
+        mouseHeld = false
+    end
+end)
+
+Mouse.Button3Down:Connect(function()
+    if selectedMouseButton == "MouseButton3" then
+        mouseHeld = true
+    end
+end)
+
+Mouse.Button3Up:Connect(function()
+    if selectedMouseButton == "MouseButton3" then
+        mouseHeld = false
+    end
+end)
