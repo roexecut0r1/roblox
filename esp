@@ -41,12 +41,14 @@ local smoothness = 0.2
 local wallCheck = false
 local teamCheck = false
 local aimPart = "Head"
+local maxAimDistance = 2000
 local useKeyboardKeybind = false -- false = mouse, true = keyboard
 local aimKey = Enum.UserInputType.MouseButton2
 local aimKeyHeld
 local mouseHeld
 local selectedMouseButton
 local circle
+local currentAimbotTarget
 
 
 local showFOV = false
@@ -54,6 +56,15 @@ local fovRadius = 120
 local fovTransparency = 0.5
 local fovThickness = 1
 local fovColor = Color3.fromRGB(255, 255, 255)
+
+local function clampVector2Magnitude(vec, maxMagnitude)
+    local magnitude = vec.Magnitude
+    if magnitude > maxMagnitude and magnitude > 0 then
+        return vec.Unit * maxMagnitude
+    end
+
+    return vec
+end
 
 local aimbotToggle = AimbotTab:CreateToggle({
     Name = "Enable Aimbot",
@@ -84,6 +95,18 @@ AimbotTab:CreateSlider({
     end
 })
 
+AimbotTab:CreateSlider({
+    Name = "Max Distance",
+    Range = {0, 2000},
+    Increment = 10,
+    Suffix = " studs",
+    CurrentValue = 2000,
+    Flag = "AimbotMaxDistance",
+    Callback = function(v)
+        maxAimDistance = v
+    end
+})
+
 AimbotTab:CreateToggle({
     Name = "Wall Check",
     CurrentValue = false,
@@ -102,7 +125,7 @@ AimbotTab:CreateToggle({
 
 AimbotTab:CreateDropdown({
     Name = "Target Part",
-    Options = {"Head","Torso","Left Arm","Right Arm","Left Leg","Right Leg"},
+    Options = {"Head","HumanoidRootPart","Torso","Left Arm","Right Arm","Left Leg","Right Leg"},
     CurrentOption = {"Head"},
     Callback = function(v)
         aimPart = v[1]
@@ -1847,7 +1870,7 @@ local function getClosest()
     local shortest = math.huge
 
     for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        if player ~= LocalPlayer and player.Character then
             local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
             if not humanoid or humanoid.Health <= 0 then
                 continue
@@ -1859,6 +1882,11 @@ local function getClosest()
 
             local part = player.Character:FindFirstChild(aimPart) or player.Character:FindFirstChild("Head")
             if not part then continue end
+
+            local worldDistance = (Camera.CFrame.Position - part.Position).Magnitude
+            if maxAimDistance > 0 and worldDistance > maxAimDistance then
+                continue
+            end
 
             local screenPoint, onScreen = Camera:WorldToViewportPoint(part.Position)
             if not onScreen or screenPoint.Z <= 0 then continue end
@@ -1909,14 +1937,26 @@ RunService.RenderStepped:Connect(function()
             local aimPos, onScreen = Camera:WorldToViewportPoint(target.Position)
             if onScreen and aimPos.Z > 0 then
                 local alpha = math.clamp(1 - smoothness, 0.02, 1)
+                local targetChanged = target ~= currentAimbotTarget
+                if targetChanged then
+                    alpha = math.min(alpha, 0.12)
+                end
+
                 local desiredPosition = Vector2.new(aimPos.X, aimPos.Y)
-                local smoothedPosition = mousePosition:Lerp(desiredPosition, alpha)
-                local currentMouse = UIS:GetMouseLocation()
-                local delta = smoothedPosition - currentMouse
+                local delta = (desiredPosition - mousePosition) * alpha
+                local maxStep = targetChanged and 18 or 35
+                delta = clampVector2Magnitude(delta, maxStep)
 
                 mousemoverel(delta.X, delta.Y)
+                currentAimbotTarget = target
+            else
+                currentAimbotTarget = nil
             end
+        else
+            currentAimbotTarget = nil
         end
+    else
+        currentAimbotTarget = nil
     end
 end)
 
