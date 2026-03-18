@@ -50,6 +50,40 @@ local selectedMouseButton
 local circle
 local currentAimbotTarget
 
+local function getDropdownValue(value)
+    if type(value) == "table" then
+        return value[1]
+    end
+
+    return value
+end
+
+local function getAimbotTargetPart(character)
+    if not character then
+        return nil
+    end
+
+    if aimPart == "HumanoidRootPart" then
+        return character:FindFirstChild("HumanoidRootPart")
+            or character:FindFirstChild("UpperTorso")
+            or character:FindFirstChild("Torso")
+            or character:FindFirstChild("Head")
+    end
+
+    if aimPart == "Torso" then
+        return character:FindFirstChild("UpperTorso")
+            or character:FindFirstChild("Torso")
+            or character:FindFirstChild("HumanoidRootPart")
+            or character:FindFirstChild("Head")
+    end
+
+    return character:FindFirstChild(aimPart)
+        or character:FindFirstChild("Head")
+        or character:FindFirstChild("HumanoidRootPart")
+        or character:FindFirstChild("UpperTorso")
+        or character:FindFirstChild("Torso")
+end
+
 
 local showFOV = false
 local fovRadius = 120
@@ -64,6 +98,23 @@ local function clampVector2Magnitude(vec, maxMagnitude)
     end
 
     return vec
+end
+
+local function safeWorldToViewport(camera, part)
+    if not camera or not part or not part.Parent then
+        return nil, false
+    end
+
+    local ok, point, onScreen = pcall(function()
+        local viewportPoint, visible = camera:WorldToViewportPoint(part.Position)
+        return viewportPoint, visible
+    end)
+
+    if not ok then
+        return nil, false
+    end
+
+    return point, onScreen
 end
 
 local aimbotToggle = AimbotTab:CreateToggle({
@@ -128,7 +179,7 @@ AimbotTab:CreateDropdown({
     Options = {"Head","HumanoidRootPart","Torso","Left Arm","Right Arm","Left Leg","Right Leg"},
     CurrentOption = {"Head"},
     Callback = function(v)
-        aimPart = v[1]
+        aimPart = getDropdownValue(v) or "Head"
     end
 })
 
@@ -161,6 +212,12 @@ local currentKey = Enum.UserInputType.MouseButton2 -- default
 aimKeyHeld = false
 mouseHeld = false
 selectedMouseButton = "MouseButton2"
+
+LocalPlayer.CharacterAdded:Connect(function()
+    aimKeyHeld = false
+    mouseHeld = false
+    currentAimbotTarget = nil
+end)
 
 local function isSelectedMouseButtonHeld()
     local buttonType = mouseButtonMap[selectedMouseButton]
@@ -196,7 +253,7 @@ AimbotTab:CreateDropdown({
     Options = {"MouseButton2","MouseButton1","MouseButton3"},
     CurrentOption = {"MouseButton2"},
     Callback = function(v)
-        selectedMouseButton = v[1]
+        selectedMouseButton = getDropdownValue(v) or "MouseButton2"
     end
 })
 
@@ -1853,6 +1910,80 @@ Rayfield:Notify({Title = "Loader", Content = "Rayfield UI created. Press K to to
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 
+local function getHumanoidModel(instance)
+    local current = instance
+    while current and current ~= workspace do
+        if current:IsA("Model") and current:FindFirstChildOfClass("Humanoid") then
+            return current
+        end
+        current = current.Parent
+    end
+end
+
+local function canSeeTarget(targetCharacter, targetPart)
+    local camera = workspace.CurrentCamera or Camera
+    if not camera or not targetCharacter or not targetPart then
+        return true
+    end
+
+    local filter = {camera}
+    if LocalPlayer and LocalPlayer.Character then
+        table.insert(filter, LocalPlayer.Character)
+    end
+
+    local params = RaycastParams.new()
+    local ok, filterType = pcall(function()
+        return Enum.RaycastFilterType.Exclude
+    end)
+    params.FilterType = ok and filterType or Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = filter
+    params.IgnoreWater = true
+
+    local origin = camera.CFrame.Position
+    local direction = targetPart.Position - origin
+
+    for _ = 1, 8 do
+        local castOk, ray = pcall(function()
+            return workspace:Raycast(origin, direction, params)
+        end)
+        if not castOk then
+            return true
+        end
+
+        if not ray or not ray.Instance then
+            return true
+        end
+
+        if ray.Instance:IsDescendantOf(targetCharacter) then
+            return true
+        end
+
+        local ignoreInstance = nil
+        local localCharacter = LocalPlayer and LocalPlayer.Character
+        if localCharacter and ray.Instance:IsDescendantOf(localCharacter) then
+            ignoreInstance = localCharacter
+        elseif ray.Instance:IsDescendantOf(camera) then
+            ignoreInstance = camera
+        else
+            local hitModel = getHumanoidModel(ray.Instance)
+            if hitModel and LocalPlayer and hitModel.Name == LocalPlayer.Name then
+                ignoreInstance = hitModel
+            elseif ray.Instance:IsA("BasePart") and ray.Instance.Transparency >= 0.98 then
+                ignoreInstance = ray.Instance
+            end
+        end
+
+        if not ignoreInstance or table.find(filter, ignoreInstance) then
+            return false
+        end
+
+        table.insert(filter, ignoreInstance)
+        params.FilterDescendantsInstances = filter
+    end
+
+    return false
+end
+
 -- FOV Circle
 circle = Drawing.new("Circle")
 circle.Visible = false
@@ -1868,10 +1999,16 @@ circle.Filled = false
 local function getClosest()
     local closest = nil
     local shortest = math.huge
+    local camera = workspace.CurrentCamera or Camera
+
+    if not camera then
+        return nil
+    end
 
     for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+        local character = player.Character
+        if player ~= LocalPlayer and character then
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
             if not humanoid or humanoid.Health <= 0 then
                 continue
             end
@@ -1880,15 +2017,15 @@ local function getClosest()
                 continue
             end
 
-            local part = player.Character:FindFirstChild(aimPart) or player.Character:FindFirstChild("Head")
+            local part = getAimbotTargetPart(character)
             if not part then continue end
 
-            local worldDistance = (Camera.CFrame.Position - part.Position).Magnitude
+            local worldDistance = (camera.CFrame.Position - part.Position).Magnitude
             if maxAimDistance > 0 and worldDistance > maxAimDistance then
                 continue
             end
 
-            local screenPoint, onScreen = Camera:WorldToViewportPoint(part.Position)
+            local screenPoint, onScreen = safeWorldToViewport(camera, part)
             if not onScreen or screenPoint.Z <= 0 then continue end
 
             local mouse = UIS:GetMouseLocation()
@@ -1896,11 +2033,8 @@ local function getClosest()
 
             if dist < shortest and dist <= fovRadius then
 
-                if wallCheck then
-                    local ray = workspace:Raycast(Camera.CFrame.Position, (part.Position - Camera.CFrame.Position))
-                    if ray and ray.Instance and not ray.Instance:IsDescendantOf(player.Character) then
-                        continue
-                    end
+                if wallCheck and not canSeeTarget(character, part) then
+                    continue
                 end
 
                 shortest = dist
@@ -1932,9 +2066,15 @@ RunService.RenderStepped:Connect(function()
     end
 
     if aimbotEnabled and isHolding then
+        local camera = workspace.CurrentCamera or Camera
+        if not camera then
+            currentAimbotTarget = nil
+            return
+        end
+
         local target = getClosest()
-        if target then
-            local aimPos, onScreen = Camera:WorldToViewportPoint(target.Position)
+        if target and target.Parent then
+            local aimPos, onScreen = safeWorldToViewport(camera, target)
             if onScreen and aimPos.Z > 0 then
                 local alpha = math.clamp(1 - smoothness, 0.02, 1)
                 local targetChanged = target ~= currentAimbotTarget
