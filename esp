@@ -43,6 +43,10 @@ local teamCheck = false
 local aimPart = "Head"
 local useKeyboardKeybind = false -- false = mouse, true = keyboard
 local aimKey = Enum.UserInputType.MouseButton2
+local aimKeyHeld
+local mouseHeld
+local selectedMouseButton
+local circle
 
 
 local showFOV = false
@@ -115,6 +119,8 @@ AimbotTab:CreateToggle({
     CurrentValue = false,
     Callback = function(v)
         useKeyboardKeybind = v
+        aimKeyHeld = false
+        mouseHeld = false
     end
 })
 
@@ -122,12 +128,33 @@ local UIS = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
+local mouseButtonMap = {
+    MouseButton1 = Enum.UserInputType.MouseButton1,
+    MouseButton2 = Enum.UserInputType.MouseButton2,
+    MouseButton3 = Enum.UserInputType.MouseButton3
+}
 
 local currentKey = Enum.UserInputType.MouseButton2 -- default
-local aimKeyHeld = false
-local mouseHeld = false
-local selectedMouseButton = "MouseButton2"
-local circle
+aimKeyHeld = false
+mouseHeld = false
+selectedMouseButton = "MouseButton2"
+
+local function isSelectedMouseButtonHeld()
+    local buttonType = mouseButtonMap[selectedMouseButton]
+    if not buttonType then
+        return false
+    end
+
+    local ok, pressed = pcall(function()
+        return UIS:IsMouseButtonPressed(buttonType)
+    end)
+
+    if ok then
+        return pressed
+    end
+
+    return mouseHeld
+end
 
 
 AimbotTab:CreateKeybind({
@@ -224,7 +251,7 @@ local TeamsService = game:GetService("Teams")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
-local MAX_DISTANCE = 2000
+local MAX_DISTANCE = 10000
 
 -- internal state
 local chamsEnabled = false
@@ -768,7 +795,7 @@ local TeamsService = game:GetService("Teams")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
-local MAX_DISTANCE = 2000
+local MAX_DISTANCE = 10000
 
 local chamsEnabled = false
 local espEnabled = false
@@ -1869,7 +1896,12 @@ RunService.RenderStepped:Connect(function()
     circle.Color = fovColor
     circle.Visible = showFOV
 
-    local isHolding = useKeyboardKeybind and aimKeyHeld or mouseHeld
+    local isHolding = false
+    if useKeyboardKeybind then
+        isHolding = aimKeyHeld
+    else
+        isHolding = isSelectedMouseButtonHeld()
+    end
 
     if aimbotEnabled and isHolding then
         local target = getClosest()
